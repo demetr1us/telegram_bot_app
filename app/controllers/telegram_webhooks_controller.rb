@@ -1,12 +1,213 @@
 class TelegramWebhooksController < Telegram::Bot::UpdatesController
   include Telegram::Bot::UpdatesController::MessageContext
 
+  def getUser(chat_id)
+    User.where({'telegram_id': chat['id']}).first
+  end
+
+  def admin?
+    User.where({'telegram_id': chat['id']}).first.is_admin
+  end
+
   def start!(*)
-    respond_with :message, text: t('.content')
+    user = getUser(chat['id'])
+    if user.nil?
+      save_context :register1
+      session['register'] = {}
+      respond_with :message, text: "Вкажіть Ваше ім'я(ПІП):"
+    else
+      respond_with :message, text: "Добрий день, #{user.name}"
+      main
+    end
+  end
+
+  def view!(*args)
+    user = getUser(chat['id'])
+    order = Order.getUserOrder(args.join(" "), chat['id'])
+    users = User.getUsers
+    response = "========================================================\n"
+    response += "працівник: #{users[order.user_id]}\n" if user.is_admin
+    response += "Заказ: #{order.name} (#{order.created_at.to_date.strftime("%d.%m.%Y")}) \n"
+    response += "клієнт: #{order.clientname} (#{order.clientphone})\n"
+    response += "#{order.description}\n"
+    response += "ціна/аванс: #{order.price}/#{order.deposit}\n"
+    response += "Закінчення: #{order.finish_date.strftime("%d.%m.%Y")}\n"
+    if user.is_admin
+      response += "закінчено? /finish_#{order.id} \n" if order.status != 1
+      response += "відновити? /restore_#{order.id} \n" if order.status == 1
+    end
+    response += "========================================================\n"
+
+    respond_with :message, text: response
+  end
+
+  def register1(*args)
+    session['register']['name'] =  args.join(" ")
+    save_context :register2
+    respond_with :message, text: "Вкажіть Ваш номер телефону:"
+  end
+
+  def register2(*args)
+    puts args.inspect
+    session['register']['phone'] =  args.join(" ")
+    save_context :register3
+    respond_with :message, text: "Ваше ім'я: #{session['register']['name']}\nВаш телефон: #{session['register']['phone']}", reply_markup: {
+      keyboard: [
+        ['text':'Підтверджую', 'callback_data': 'ok'],
+        ['Скасувати']],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+  end
+
+  def register3(val)
+    puts val.inspect
+    if (val == 'Підтверджую')
+      begin
+      user = User.new
+      user.id = chat['id']
+      user.name = session['register']['name']
+      user.phone = session['register']['phone']
+      user.role = 0
+      user.telegram_id = chat['id']
+      user.save!
+      rescue
+        respond_with :message, text: "Щось пішло не так, зв'яжіться з адміністратором"
+      end
+        respond_with :message, text: "Чудово! тепер ми знайомі, можна приступати до роботи :) !"
+        main
+      end
+
+    end
+
+  def main(*)
+    user = getUser(chat['id'])
+    if user.is_admin
+      admin_menu
+    else
+      user_menu
+    end
+  end
+
+  def admin_menu(value = nil, *)
+    #respond_with :message, text: "Адмін меню"
+    users = User.getUsers
+    puts users.inspect
+    response = []
+     Order.adminOrders.each do |order|
+       response.push("#{users[order.user_id]} ||| #{order.clientname}: ||| #{order.name} ||| закінчити: #{order.finish_date} ||| '/view_#{order.id}'" )
+     end
+     respond_with :message, text: response.join("\n")
+  end
+
+
+  def user_menu(value = nil, *)
+    save_context :user_menu2
+    respond_with :message, text: "Юзер меню: ", reply_markup: {
+      keyboard: [
+        ['text':'Новий заказ', 'callback_data': 'ok'],
+        ['text':'Список заказів', 'callback_data': 'ok'],
+        ['Скасувати']],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+  end
+
+  def user_menu2(value = nil, *)
+    #respond_with :message, text: value.join(' ')
+    puts value
+    if value == 'Новий'
+      save_context :new_order
+      session['client'] = {}
+      respond_with :message, text: "Ім'я клієнта: "
+    elsif value == 'Список'
+      order_list
+    end
+  end
+
+  def order_list
+    orders = Order.userOrders(chat['id'])
+    return false if orders.empty?
+    response = []
+    orders.each do |order|
+      response.push("#{order.clientname}: ||| #{order.name} ||| закінчити: #{order.finish_date} ||| '/view_#{order.id}'" )
+    end
+    respond_with :message, text: response.join("\n")
+  end
+
+  def new!(*)
+    save_context :new_order
+    session['client'] = {}
+    respond_with :message, text: "Ім'я клієнта: "
+  end
+
+  def new_order(*args)
+    save_context :new_order2
+    session['client']['name'] =  args.join(" ")
+    respond_with :message, text: "Номер телефону клієнта:"
+  end
+
+  def new_order2(*args)
+    save_context :new_order3
+    session['client']['phone'] =  Phony.normalize(args.join(" "))
+    respond_with :message, text: "Назва заказу(виріб):"
+  end
+
+  def new_order3(*args)
+    save_context :new_order4
+    session['order'] = {}
+    session['order']['name'] =  args.join(" ")
+    respond_with :message, text: "Опис заказу(що треба зробити):"
+  end
+
+  def new_order4(*args)
+    save_context :new_order5
+    session['order']['description'] =  args.join(" ")
+    respond_with :message, text: "Ціна заказу:"
+  end
+
+  def new_order5(*args)
+    save_context :new_order6
+    session['order']['price'] =  args.join(" ")
+    respond_with :message, text: "Внесенний завдаток:"
+  end
+
+  def new_order6(*args)
+    save_context :new_order7
+    session['order']['money'] =  args.join(" ")
+    respond_with :message, text: "Дата закінчення (орієнтовно):"
+  end
+
+  def new_order7(*args)
+    save_context :new_order5
+    session['order']['finish_date'] =  args.join(" ").to_datetime
+    puts "client = "+session['client'].inspect
+    puts "order = "+session['order'].inspect
+
+    begin
+      order = Order.new
+      order.user_id = chat['id']
+      order.clientname = session['client']['name']
+      order.clientphone =  session['client']['phone']
+      order.name = session['order']['name']
+      order.description = session['order']['description']
+      order.price = session['order']['price']
+      order.deposit = session['order']['money']
+      order.finish_date = session['order']['finish_date']
+      order.save!
+    rescue
+      respond_with :message, text: "Щось пішло не так, зв'яжіться з адміністратором"
+      return false
+    end
+    respond_with :message, text: "Додано!"
+    user_menu
   end
 
   def help!(*)
     respond_with :message, text: t('.content')
+
   end
 
   def memo!(*args)
@@ -93,13 +294,35 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   end
 
   def message(message)
+    puts "FROM = #{message['from']['id']}"
     respond_with :message, text: t('.content', text: message['text'])
+  end
+
+  def finish(order_id)
+    if admin?
+      order = Order.find(order_id)
+    else
+      order = Order.getUserOrder(order_id, chat['id'])
+    end
+
+    return false if order.nil?
+    if order.status != 1
+      order.status = 1
+    else
+      order.status = 0
+    end
+    puts "status = #{order.status}"
+    order.save
+    view!(order.id)
   end
 
   def action_missing(action, *_args)
     if action_type == :command
-      respond_with :message,
-        text: t('telegram_webhooks.action_missing.command', command: action_options[:command])
+      parts = action.split('_')
+      return view!(parts[1].tr('!', '')) if parts[0]=='view'
+      return finish(parts[1]) if parts[0] == 'finish'
+      return finish(parts[1]) if parts[0] == 'restore'
     end
   end
+
 end
