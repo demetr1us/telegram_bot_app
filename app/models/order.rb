@@ -12,4 +12,9 @@ class Order < ApplicationRecord
   def self.getUserOrder(id, user_id)
     Order.where({:user_id=>user_id, :id=>id}).first
   end
+
+  def finished?
+     status == 1
+  end
+
 end
