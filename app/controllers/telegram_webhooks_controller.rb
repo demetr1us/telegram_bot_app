@@ -1,8 +1,71 @@
 class TelegramWebhooksController < Telegram::Bot::UpdatesController
   include Telegram::Bot::UpdatesController::MessageContext
 
+  def menu!
+    start!
+  end
+
+  def users_buttons(order_id)
+    result = []
+    users = getUsers()
+    users.each_slice(3) do |slice|
+      slice.map!{|user| {text: user.name, callback_data: "assign_#{order_id}_#{user.id}"} }
+      result.push(slice)
+    end
+    result
+  end
+
+  def users!
+    return false unless admin?
+    users = User.all
+    response=[]
+    users.each do |user|
+      response.push("#{user.name} (#{user.phone})||| приєднався: ||| #{user.created_at.strftime("%d.%m.%Y")} ||| '/user_#{user.id}'" )
+    end
+    respond_with :message, text: response.join("\n")
+  end
+
+  def transfer(order_id)
+    puts "1============"
+    return false unless admin?
+    puts "2============"
+    buttons = users_buttons(order_id)
+    respond_with :message, text: "Оберіть кому передати замовлення?", reply_markup: {
+      inline_keyboard:  buttons,
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+  end
+
+  def do_transfer(order_id, user_id)
+    return false unless admin?
+    order = getOrder(order_id)
+    order.transferToUser(user_id)
+    order.setOnHold if order.status == 1
+    order.actor = chat['id']
+    order.save
+    view!(order_id)
+  end
+
+  def getUsers(type=nil)
+    if type.nil?
+      User.all
+    else
+      User.where({:role=>type.to_i})
+    end
+  end
+
   def getUser(chat_id)
     User.where({'telegram_id': chat['id']}).first
+  end
+
+  def getOrder(order_id)
+    if admin?
+      Order.find(order_id)
+    else
+      Order.getUserOrder(order_id, chat['id'])
+    end
   end
 
   def admin?
@@ -10,6 +73,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   end
 
   def start!(*)
+    puts users_buttons(5).to_s
     user = getUser(chat['id'])
     if user.nil?
       save_context :register1
@@ -21,11 +85,34 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     end
   end
 
+  def user(user_id)
+    return false unless admin?
+    puts "user_id=#{user_id}"
+    user = User.find(user_id.to_i)
+    response = "=====================Працівник=======================\n"
+    response +="#{user.type}: #{user.name}\n"
+    response += "Телефон: #{user.phone}\n"
+    response += "Дата реєстрації: #{user.created_at.strftime("%d.%m.%Y")}"
+    respond_with :message, text: response, reply_markup: {
+      inline_keyboard: [
+        [
+          {text: 'Список замовлень', callback_data: "userorder_#{user_id}"}
+        ]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+
+
+  end
+
   def view!(*args)
     user = getUser(chat['id'])
-    order = Order.getUserOrder(args.join(" "), chat['id'])
+    order = getOrder(args.join(" ").to_i)
     users = User.getUsers
-    response = "========================================================\n"
+    response = "============Cтатус: #{order.getStatus}================\n"
+    response += "номер замовлення: #{order.id}\n"
     response += "працівник: #{users[order.user_id]}\n" if user.is_admin
     response += "Заказ: #{order.name} (#{order.created_at.to_date.strftime("%d.%m.%Y")}) \n"
     response += "клієнт: #{order.clientname} (#{order.clientphone})\n"
@@ -34,23 +121,37 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     response += "Закінчення: #{order.finish_date.strftime("%d.%m.%Y")}\n"
     response += "========================================================\n"
 
-    if order.finished?
-      button = {text: 'Відновити', callback_data: "finish_#{order.id}"}
-    else
-      button = {text: 'Закінчити', callback_data: "finish_#{order.id}"}
+    all_buttons = []
+    buttons = []
+    unless order.status == 4
+      buttons.push({text: 'Почати', callback_data: "status_#{order.id}_1"}) unless order.status == 1
+      buttons.push({text: 'Зупинити', callback_data: "status_#{order.id}_2"}) unless order.status == 2
+      buttons.push({text: 'Готово', callback_data: "status_#{order.id}_3"}) unless order.status == 3
+      buttons.push({text: 'Видано', callback_data: "status_#{order.id}_4"})
     end
-
+    all_buttons.push(buttons)
+    all_buttons.push([{text: 'Призначити майстра', callback_data: "transfer_#{order.id}"}]) if admin?
+    all_buttons.push([{text: 'Історія змін', callback_data: "history_#{order.id}"}]) if admin?
     respond_with :message, text: response, reply_markup: {
-      inline_keyboard: [
-        [
-          button
-        ]
-      ],
+      inline_keyboard: all_buttons,
       resize_keyboard: true,
       one_time_keyboard: true,
       selective: true,
     }
 
+  end
+
+  def history(order_id)
+    response = []
+    puts "ORDER = #{order_id}"
+    records = OrdersLog.order_history(order_id)
+    return  respond_with :message, text: "Пусто" if records.empty?
+    users = User.getUsers
+
+    records.each do |record|
+      response.push("#{record.created_at.strftime('%d.%m.%Y')}: (#{users[record.actor]}) #{record.reason}")
+    end
+    respond_with :message, text: response.join("\n")
   end
 
   def register1(*args)
@@ -61,7 +162,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
 
   def register2(*args)
     puts args.inspect
-    session['register']['phone'] =  args.join(" ")
+    session['register']['phone'] =  normaize_phone(args.join(" "))
     save_context :register3
     respond_with :message, text: "Ваше ім'я: #{session['register']['name']}\nВаш телефон: #{session['register']['phone']}", reply_markup: {
       keyboard: [
@@ -104,11 +205,13 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
 
   def admin_menu(value = nil, *)
     save_context :admin_menu2
+
     respond_with :message, text: "Menu", reply_markup: {
       inline_keyboard: [
         [
           {text: 'Новий заказ', callback_data: 'new'},
           {text: 'Список заказів', callback_data: 'list'},
+          {text: 'Працівники', callback_data: 'users' }
         ]
       ],
       resize_keyboard: true,
@@ -126,6 +229,8 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       respond_with :message, text: "Ім'я клієнта: "
     elsif value == 'Список'
       admin_orders
+    elsif value == 'Скасувати'
+      menu!
     end
   end
 
@@ -162,15 +267,19 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       respond_with :message, text: "Ім'я клієнта: "
     elsif value == 'Список'
       order_list
+    elsif value == 'Скасувати'
+      menu!
     end
   end
 
-  def order_list
-    orders = Order.userOrders(chat['id'])
+  def order_list(user_id=nil)
+    user_id = chat['id'] if user_id.nil?
+    orders = Order.userOrders(user_id)
+    puts orders.to_json
     return false if orders.empty?
     response = []
     orders.each do |order|
-      response.push("#{order.clientname}: ||| #{order.name} ||| закінчити: #{order.finish_date} ||| '/view_#{order.id}'" )
+      response.push("#{order.clientname}: ||| #{order.name} ||| Статус: #{order.getStatus} ||| '/view_#{order.id}'" )
     end
     respond_with :message, text: response.join("\n")
   end
@@ -190,7 +299,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   def normaize_phone(phone)
     phone = phone.delete('^0-9')
 
-    phone ="38#{phone}" if phone.length  == 10
+    phone ="+38#{phone}" if phone.length  == 10
     phone
   end
 
@@ -222,7 +331,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   def new_order6(*args)
     save_context :new_order7
     session['order']['money'] =  args.join(" ")
-    respond_with :message, text: "Дата закінчення (орієнтовно):"
+    respond_with :message, text: "Дата закінчення (дд.мм.рррр наприклад 24.08.2021):"
   end
 
   def new_order7(*args)
@@ -241,6 +350,8 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       order.price = session['order']['price']
       order.deposit = session['order']['money']
       order.finish_date = session['order']['finish_date']
+      order.actor = chat['id']
+      order.status = 0
       order.save!
     rescue
       respond_with :message, text: "Щось пішло не так, зв'яжіться з адміністратором"
@@ -301,11 +412,21 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     parts = data.split('_')
     if parts[0] == 'new'
       new!
+    elsif parts[0] == 'users'
+      users!
     elsif parts[0] == 'list'
       admin_orders if admin?
       order_list if !admin?
-    elsif parts[0] == 'finish'
-      finish(parts[1])
+    elsif parts[0] == 'status'
+      status(parts[1], parts[2])
+    elsif parts[0]=='userorder'
+      order_list(parts[1]) if admin?
+    elsif parts[0] == 'transfer'
+      transfer(parts[1])
+    elsif parts[0] == 'history'
+      history(parts[1])
+    elsif parts[0] == 'assign'
+      do_transfer(parts[1], parts[2])
     else
       answer_callback_query t('.no_alert')
     end
@@ -351,20 +472,11 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     #respond_with :message, text: t('.content', text: message['text'])
   end
 
-  def finish(order_id)
-    if admin?
-      order = Order.find(order_id)
-    else
-      order = Order.getUserOrder(order_id, chat['id'])
-    end
-
+  def status(order_id,status)
+    order = getOrder(order_id)
     return false if order.nil?
-    if order.status != 1
-      order.status = 1
-    else
-      order.status = 0
-    end
-    puts "status = #{order.status}"
+    order.status = status
+    order.actor = chat['id']
     order.save
     view!(order.id)
   end
@@ -373,6 +485,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     if action_type == :command
       parts = action.split('_')
       return view!(parts[1].tr('!', '')) if parts[0]=='view'
+      return user(parts[1]) if parts[0]=='user'
       return finish(parts[1]) if parts[0] == 'finish'
       return finish(parts[1]) if parts[0] == 'restore'
     end

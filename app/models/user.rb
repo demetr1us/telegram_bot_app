@@ -10,6 +10,14 @@ class User < ApplicationRecord
     role == 2
   end
 
+  def type
+    if role == 2
+      "Керівник"
+    else
+      "Майстриня"
+    end
+  end
+
   def self.getUsers
     Hash[User.all.collect{|user| [user.telegram_id, user.name]}]
   end
