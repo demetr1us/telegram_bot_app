@@ -48,6 +48,14 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     view!(order_id)
   end
 
+  def getOrders
+    if admin?
+      Order.adminOrders
+    else
+      Order.userOrders(chat['id'])
+    end
+  end
+
   def getUsers(type=nil)
     if type.nil?
       User.all
@@ -122,15 +130,20 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     response += "========================================================\n"
 
     all_buttons = []
+    all_buttons.push([{text: 'редагувати', callback_data: "edit_#{order.id}"}]) if (order.status == 0 || admin?)
     buttons = []
-    unless order.status == 4
+    unless order.status == 4 || order.status == 5
       buttons.push({text: 'Почати', callback_data: "status_#{order.id}_1"}) unless order.status == 1
       buttons.push({text: 'Зупинити', callback_data: "status_#{order.id}_2"}) unless order.status == 2
       buttons.push({text: 'Готово', callback_data: "status_#{order.id}_3"}) unless order.status == 3
       buttons.push({text: 'Видано', callback_data: "status_#{order.id}_4"})
     end
+    buttons.push({text: 'Скасувати', callback_data: "status_#{order.id}_5"}) unless order.status == 5 && order.status == 4
     all_buttons.push(buttons)
-    all_buttons.push([{text: 'Призначити майстра', callback_data: "transfer_#{order.id}"}]) if admin?
+    admin_buttons = [{text: 'Призначити майстра', callback_data: "transfer_#{order.id}"}]
+    admin_buttons.push({text: 'Відновити', callback_data: "status_#{order.id}_0"}) if order.status == 5
+    admin_buttons.push({text: 'Видалити', callback_data: "status_#{order.id}_10"}) if order.status == 5
+    all_buttons.push(admin_buttons) if admin?
     all_buttons.push([{text: 'Історія змін', callback_data: "history_#{order.id}"}]) if admin?
     respond_with :message, text: response, reply_markup: {
       inline_keyboard: all_buttons,
@@ -149,7 +162,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     users = User.getUsers
 
     records.each do |record|
-      response.push("#{record.created_at.strftime('%d.%m.%Y')}: (#{users[record.actor]}) #{record.reason}")
+      response.push("#{record.created_at.strftime('%d.%m.%Y')}: (#{users[record.actor]}) Виконавець: #{users[record.user_id]}  #{record.reason}")
     end
     respond_with :message, text: response.join("\n")
   end
@@ -234,6 +247,14 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     end
   end
 
+  def list!
+    if admin?
+      return admin_orders
+    else
+      return order_list
+    end
+  end
+
   def admin_orders
     users = User.getUsers
     response = []
@@ -273,8 +294,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   end
 
   def order_list(user_id=nil)
-    user_id = chat['id'] if user_id.nil?
-    orders = Order.userOrders(user_id)
+    orders =  getOrders
     puts orders.to_json
     return false if orders.empty?
     response = []
@@ -288,6 +308,108 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     save_context :new_order
     session['client'] = {}
     respond_with :message, text: "Ім'я клієнта: "
+  end
+
+  def edit!(*args)
+    save_context :edit1
+    order = getOrder(args.join(" ").to_i)
+    respond_with :message, text: "Клієнт: #{order.clientname}"
+    respond_with :message, text: "Телефон: #{order.clientphone}", reply_markup: {
+      inline_keyboard: [
+        [{text: 'Змінити', callback_data: "update_#{order.id}_phone"}]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+    respond_with :message, text: "Назва: #{order.name}", reply_markup: {
+      inline_keyboard: [
+        [{text: 'Змінити', callback_data: "update_#{order.id}_name"}]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+
+    respond_with :message, text: "Опис: #{order.description}", reply_markup: {
+      inline_keyboard: [
+        [{text: 'Змінити', callback_data: "update_#{order.id}_description"}]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+    respond_with :message, text: "Ціна: #{order.price}", reply_markup: {
+      inline_keyboard: [
+        [{text: 'Змінити', callback_data: "update_#{order.id}_price"}]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+    respond_with :message, text: "Аванс: #{order.deposit}", reply_markup: {
+      inline_keyboard: [
+        [{text: 'Змінити', callback_data: "update_#{order.id}_deposit"}]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+    respond_with :message, text: "Закінчення: #{order.finish_date.strftime("%d.%m.%Y")}", reply_markup: {
+      inline_keyboard: [
+        [{text: 'Змінити', callback_data: "update_#{order.id}_finish"}]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+  end
+
+  def update!(order_id , type)
+    msg = ''
+    order = getOrder(order_id.to_i)
+    return false if (order.nil? || (order.status != 0 && !admin?))
+    save_context :update2
+    session['update'] = {'id': order_id, 'type': type}
+    if type == 'name'
+      msg = "Введіть назву"
+    elsif type == 'description'
+      msg = "Введіть опис"
+    elsif  type == 'price'
+      msg = "Введіть ціну"
+    elsif  type == 'deposit'
+      msg = "Введіть аванс"
+    elsif  type == 'finish'
+      msg = "Введіть дату закінчення"
+    else
+      return  respond_with :message, text: 'невідоме поле'
+    end
+    respond_with :message, text: msg
+  end
+
+  def update2(*args)
+    value = args.join(" ")
+    puts session['update'][:id]
+    order = getOrder(session['update'][:id].to_i)
+    type = session['update'][:type]
+    if type == 'name'
+      order.name = value
+    elsif type == 'description'
+      order.description = value
+    elsif  type == 'price'
+      order.price = value
+    elsif  type == 'deposit'
+      order.deposit = value
+    elsif  type == 'finish'
+      order.finish_date = value.to_datetime
+    else
+      return  respond_with :message, text: 'невідоме поле'
+    end
+    order.save
+    Payment.pay(order, Payment::TYPE_DEPOSIT)
+    order.log('update',type)
+    session['update'] = nil
+    view!(order.id)
   end
 
   def new_order(*args)
@@ -337,8 +459,6 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   def new_order7(*args)
     save_context :new_order5
     session['order']['finish_date'] =  args.join(" ").to_datetime
-    puts "client = "+session['client'].inspect
-    puts "order = "+session['order'].inspect
 
     begin
       order = Order.new
@@ -347,18 +467,19 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       order.clientphone =  session['client']['phone']
       order.name = session['order']['name']
       order.description = session['order']['description']
-      order.price = session['order']['price']
-      order.deposit = session['order']['money']
+      order.price = session['order']['price'].to_i
+      order.deposit = session['order']['money'].to_i
       order.finish_date = session['order']['finish_date']
       order.actor = chat['id']
       order.status = 0
       order.save!
+      Payment.pay(order, Payment::TYPE_DEPOSIT)
+      order.log('status')
     rescue
       respond_with :message, text: "Щось пішло не так, зв'яжіться з адміністратором"
       return false
     end
-    respond_with :message, text: "Додано!"
-    user_menu
+    view!(order.id)
   end
 
   def help!(*)
@@ -412,6 +533,10 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     parts = data.split('_')
     if parts[0] == 'new'
       new!
+    elsif parts[0] == 'edit'
+      edit!(parts[1])
+    elsif parts[0] == 'update'
+      update!(parts[1], parts[2])
     elsif parts[0] == 'users'
       users!
     elsif parts[0] == 'list'
@@ -473,11 +598,17 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   end
 
   def status(order_id,status)
+    if status.to_i == 10 && admin?
+      Order.deleteOrder(order_id.to_i)
+      return order_list
+    end
     order = getOrder(order_id)
     return false if order.nil?
     order.status = status
     order.actor = chat['id']
     order.save
+    Payment.pay(order, Payment::TYPE_PAY) if order.status == 4
+    order.log('status')
     view!(order.id)
   end
 

@@ -1,9 +1,8 @@
 class Order < ApplicationRecord
 
-  after_save :log
 
   def self.userOrders(user_id)
-    orders = Order.where({:user_id=>user_id})
+    orders = Order.where({:user_id=>user_id, :status => [0,1,2,3,4]})
     orders
   end
 
@@ -31,6 +30,10 @@ class Order < ApplicationRecord
     status = 4 if status < 4
   end
 
+  def setCancelled
+    status = 5
+  end
+
   def getStatus
     if status == 0
       return "Новий"
@@ -42,6 +45,8 @@ class Order < ApplicationRecord
       return "Готово"
     elsif status == 4
       return "Здано"
+    elsif status == 5
+      return "Скасовано"
     end
   end
 
@@ -50,13 +55,21 @@ class Order < ApplicationRecord
   end
 
 
-  def log
+  def self.deleteOrder(order_id)
+    puts order_id
+    OrdersLog.where({order_id: order_id}).destroy_all
+    Order.find(order_id.to_i).destroy
+  end
+
+  def log(type, info='')
     users = User.getUsers
-    if user_id != actor
-      OrdersLog.add_log(actor, id,  user_id , "Передано #{users[user_id]}")
-    else
-      OrdersLog.add_log(actor, id, user_id,  "Статус: "+getStatus)
-    end
+    OrdersLog.add_log(actor, id, user_id,  "Статус: "+getStatus) if type=='status'
+    OrdersLog.add_log(actor, id, user_id,  "Оновлено: "+info) if type=='update'
+    # if user_id != actor
+    #   OrdersLog.add_log(actor, id,  user_id , "Передано #{users[user_id]}")
+    # else
+
+    #    end
   end
 
 
