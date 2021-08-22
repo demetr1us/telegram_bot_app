@@ -1,6 +1,15 @@
 class TelegramWebhooksController < Telegram::Bot::UpdatesController
   include Telegram::Bot::UpdatesController::MessageContext
 
+  def initialize(bot = nil, update = nil)
+    unless update['message'].nil?
+      @contact = update['message']['contact']
+    else
+      @contact
+    end
+    super
+  end
+
   def menu!
     start!
   end
@@ -26,9 +35,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   end
 
   def transfer(order_id)
-    puts "1============"
     return false unless admin?
-    puts "2============"
     buttons = users_buttons(order_id)
     respond_with :message, text: "Оберіть кому передати замовлення?", reply_markup: {
       inline_keyboard:  buttons,
@@ -48,11 +55,11 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     view!(order_id)
   end
 
-  def getOrders
+  def getOrders(type=nil)
     if admin?
-      Order.adminOrders
+      Order.adminOrders(type)
     else
-      Order.userOrders(chat['id'])
+      Order.userOrders(chat['id'], type)
     end
   end
 
@@ -65,7 +72,8 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   end
 
   def getUser(chat_id)
-    User.where({'telegram_id': chat['id']}).first
+    user = User.where({'telegram_id': chat['id']})
+    user.first unless user.nil?
   end
 
   def getOrder(order_id)
@@ -77,13 +85,89 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   end
 
   def admin?
-    User.where({'telegram_id': chat['id']}).first.is_admin
+    user = getUser(chat['id'])
+    !user.nil? && user.is_admin
+  end
+
+  def phone!(*)
+    save_context :client
+    session['client'] = {}
+    respond_with :message, text: 'Ваш номер телефону', reply_markup: {
+      keyboard: [[{ text: 'надіслати номер телефону', request_contact: true }]],
+      resize_keyboard: true ,
+      one_time_keyboard: true ,
+      selective: false ,
+    }
+  end
+
+  def client(*args)
+    if @contact.nil?
+      respond_with :message, text: 'Натисніть кнопку "надіслати номер телефону"', reply_markup: {
+        keyboard: [[{ text: 'надіслати номер телефону', request_contact: true }]],
+        resize_keyboard: true ,
+        one_time_keyboard: true ,
+        selective: false ,
+      }
+    else
+      save_context :addClient
+      respond_with :message, text: "Вкажіть Ваше ім'я(ПІП):"
+
+    end
+    phone = normaize_phone(@contact['phone_number'])
+    session['client']['phone'] =  phone
+  end
+
+  def addClient(*args)
+    name = args.join(" ")
+    puts "phone=#{session['client']['phone']}"
+    User.addClient(session['client']['phone'], name, chat['id'])
+    client_menu
+  end
+
+  def client_menu(value = nil, *)
+    save_context :client_menu2
+    respond_with :message, text: "Menu", reply_markup: {
+      inline_keyboard: [
+        [
+          {text: 'Мої замовлення', callback_data: 'list'},
+        ]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+      selective: true,
+    }
+  end
+
+  def client_menu2(*args)
+    item = args.join(' ')
+    client = getUser(chat['id'])
+    if item == 'Мої замовлення'
+      client_orders(client.phone)
+    end
+  end
+
+  def client_orders!(phone_number)
+    client_orders(phone_number)
+  end
+
+  def client_orders(phone_number)
+    orders = Order.clientOrders(phone_number)
+    users = User.getUsers
+    orders.each do |order|
+      msg = "====#{order.name}====\n"
+      msg += "#{order.description}\n"
+      msg += "Відповідальна особа: #{users[order.user_id]}\n"
+      msg += "Статус: #{order.clientStatus} \n"
+      msg += "Остання дія: #{order.updated_at.strftime("%d.%m.%Y %H:%M")}"
+      respond_with :message, text: msg
+    end
   end
 
   def start!(*)
-    puts users_buttons(5).to_s
     user = getUser(chat['id'])
     if user.nil?
+      respond_with :message, text: "Давайте знайомитись!"
+      return phone!
       save_context :register1
       session['register'] = {}
       respond_with :message, text: "Вкажіть Ваше ім'я(ПІП):"
@@ -114,6 +198,20 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
 
 
   end
+
+  def report!(*args)
+    return false unless admin?
+
+    report = Payment.day_report
+    msg = "(#{Time.current.strftime('%d-%m-%Y') }) Сьогодні було отримано: "
+    unless report.empty?
+      report.each_key   do |name|
+        msg += "\n#{name}: #{report[name]} грн. "
+      end
+    end
+    respond_with :message, text: msg
+  end
+
 
   def view!(*args)
     user = getUser(chat['id'])
@@ -211,8 +309,10 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     user = getUser(chat['id'])
     if user.is_admin
       admin_menu
-    else
+    elsif user.is_employee
       user_menu
+    else
+      client_menu
     end
   end
 
@@ -279,22 +379,22 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     }
   end
 
-  def user_menu2(value = nil, *)
+  def user_menu2(*args)
     #respond_with :message, text: value.join(' ')
-    puts value
+    value = args.join(' ')
     if value == 'Новий'
       save_context :new_order
       session['client'] = {}
       respond_with :message, text: "Ім'я клієнта: "
-    elsif value == 'Список'
+    elsif value == 'Список заказів'
       order_list
     elsif value == 'Скасувати'
       menu!
     end
   end
 
-  def order_list(user_id=nil)
-    orders =  getOrders
+  def order_list(type=nil)
+    orders =  getOrders(type)
     puts orders.to_json
     return false if orders.empty?
     response = []
@@ -422,6 +522,8 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     phone = phone.delete('^0-9')
 
     phone ="+38#{phone}" if phone.length  == 10
+    phone ="+#{phone}" if phone.length  == 12
+
     phone
   end
 
@@ -473,6 +575,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       order.actor = chat['id']
       order.status = 0
       order.save!
+      User.addClient(session['client']['phone'], session['client']['name'],'0')
       Payment.pay(order, Payment::TYPE_DEPOSIT)
       order.log('status')
     rescue

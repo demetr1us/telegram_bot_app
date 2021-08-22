@@ -13,9 +13,22 @@ class User < ApplicationRecord
   def type
     if role == 2
       "Керівник"
-    else
+    elsif role == 1
       "Майстриня"
+    else
+      "Клієнт"
     end
+  end
+
+  def self.addClient(phone, name, telegram_id)
+    user = User.where({:phone=>phone}).first
+    user = User.new if user.nil?
+    user.id = telegram_id
+    user.name = name
+    user.phone = phone
+    user.role = 0
+    user.telegram_id = telegram_id
+    user.save!
   end
 
   def self.getUsers

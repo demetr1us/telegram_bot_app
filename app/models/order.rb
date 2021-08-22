@@ -1,8 +1,15 @@
 class Order < ApplicationRecord
+  has_many :payments
+  belongs_to :user
 
 
   def self.userOrders(user_id)
     orders = Order.where({:user_id=>user_id, :status => [0,1,2,3,4]})
+    orders
+  end
+
+  def self.clientOrders(phone_number)
+    orders = Order.where({:clientphone=>phone_number, :status => [0,1,2,3]})
     orders
   end
 
@@ -47,6 +54,18 @@ class Order < ApplicationRecord
       return "Здано"
     elsif status == 5
       return "Скасовано"
+    end
+  end
+
+  def clientStatus
+    if status == 0
+      return "На розгляді"
+    elsif status == 1
+      return "В данний момент іде робота з пошиву вашого виробу"
+    elsif status == 2
+      return "Призупинено"
+    elsif status == 3
+      return "Готово (заберіть виріб)"
     end
   end
 
