@@ -1,5 +1,6 @@
 class TelegramWebhooksController < Telegram::Bot::UpdatesController
   include Telegram::Bot::UpdatesController::MessageContext
+  include ClientStuffConcern
 
   def initialize(bot = nil, update = nil)
     unless update['message'].nil?
@@ -137,6 +138,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       inline_keyboard: [
         [
           {text: 'Мої замовлення', callback_data: 'clientlist'},
+          {text: 'Нове замовлення', callback_data: 'new'}
         ]
       ],
       resize_keyboard: true,
@@ -155,23 +157,8 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     end
   end
 
-  def client_orders!(*)
-    client = getUser(chat['id'])
-    client_orders(client.phone)
-  end
 
-  def client_orders(phone_number)
-    orders = Order.clientOrders(phone_number)
-    users = User.getUsers
-    orders.each do |order|
-      msg = "====#{order.name}====\n"
-      msg += "#{order.description}\n"
-      msg += "Відповідальна особа: #{users[order.user_id]}\n"
-      msg += "Статус: #{order.clientStatus} \n"
-      msg += "Остання дія: #{order.updated_at.strftime("%d.%m.%Y %H:%M")}"
-      respond_with :message, text: msg
-    end
-  end
+
 
   def start!(*)
     user = getUser(chat['id'])
@@ -418,7 +405,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
 
   def new!(*)
     save_context :new_order
-    return if client?
+    return new_order_client if client?
     session['client'] = {}
     respond_with :message, text: "Ім'я клієнта: "
   end

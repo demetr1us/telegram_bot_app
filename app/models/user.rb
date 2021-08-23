@@ -31,6 +31,19 @@ class User < ApplicationRecord
     user.save!
   end
 
+  def create_order(name, description)
+    order = Order.new
+    order.name = name
+    order.description = description
+    order.clientphone = self.phone
+    order.clientname = self.name
+    order.user_id = self.id
+    order.actor = self.id
+    order.status = 0
+    order.save!
+    order
+  end
+
   def self.getUsers
     Hash[User.all.collect{|user| [user.telegram_id, user.name]}]
   end
