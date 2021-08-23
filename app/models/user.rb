@@ -23,11 +23,11 @@ class User < ApplicationRecord
   def self.addClient(phone, name, telegram_id)
     user = User.where({:phone=>phone}).first
     user = User.new if user.nil?
-    user.id = telegram_id
+    user.id = telegram_id if user.id.to_i == 0
     user.name = name
     user.phone = phone
     user.role = 0
-    user.telegram_id = telegram_id
+    user.telegram_id = telegram_id if user.telegram_id.to_i == 0
     user.save!
   end
 

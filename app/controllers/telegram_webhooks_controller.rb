@@ -16,7 +16,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
 
   def users_buttons(order_id)
     result = []
-    users = getUsers()
+    users = getUsers([1,2])
     users.each_slice(3) do |slice|
       slice.map!{|user| {text: user.name, callback_data: "assign_#{order_id}_#{user.id}"} }
       result.push(slice)
@@ -59,7 +59,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     if admin?
       Order.adminOrders(type)
     else
-      Order.userOrders(chat['id'], type)
+      Order.userOrders(chat['id'])
     end
   end
 
@@ -67,7 +67,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     if type.nil?
       User.all
     else
-      User.where({:role=>type.to_i})
+      User.where({:role=>type})
     end
   end
 
@@ -83,7 +83,14 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       Order.getUserOrder(order_id, chat['id'])
     end
   end
-
+  def client?
+    user = getUser(chat['id'])
+    !user.nil? && user.is_client
+  end
+  def employee?
+    user = getUser(chat['id'])
+    !user.nil? && user.is_employee
+  end
   def admin?
     user = getUser(chat['id'])
     !user.nil? && user.is_admin
@@ -129,7 +136,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     respond_with :message, text: "Menu", reply_markup: {
       inline_keyboard: [
         [
-          {text: 'Мої замовлення', callback_data: 'list'},
+          {text: 'Мої замовлення', callback_data: 'clientlist'},
         ]
       ],
       resize_keyboard: true,
@@ -141,13 +148,16 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   def client_menu2(*args)
     item = args.join(' ')
     client = getUser(chat['id'])
+    puts "item= #{item} \n"
+    puts "client= #{client.name}\n"
     if item == 'Мої замовлення'
       client_orders(client.phone)
     end
   end
 
-  def client_orders!(phone_number)
-    client_orders(phone_number)
+  def client_orders!(*)
+    client = getUser(chat['id'])
+    client_orders(client.phone)
   end
 
   def client_orders(phone_number)
@@ -350,8 +360,10 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
   def list!
     if admin?
       return admin_orders
-    else
+    elsif employee?
       return order_list
+    else
+      return client_orders!
     end
   end
 
@@ -406,6 +418,7 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
 
   def new!(*)
     save_context :new_order
+    return if client?
     session['client'] = {}
     respond_with :message, text: "Ім'я клієнта: "
   end
@@ -644,7 +657,8 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       users!
     elsif parts[0] == 'list'
       admin_orders if admin?
-      order_list if !admin?
+      order_list if employee?
+      client_orders! if client?
     elsif parts[0] == 'status'
       status(parts[1], parts[2])
     elsif parts[0]=='userorder'
@@ -655,6 +669,8 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
       history(parts[1])
     elsif parts[0] == 'assign'
       do_transfer(parts[1], parts[2])
+    elsif parts[0] == 'clientlist'
+      client_orders!
     else
       answer_callback_query t('.no_alert')
     end
