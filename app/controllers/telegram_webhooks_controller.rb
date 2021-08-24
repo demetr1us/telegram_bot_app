@@ -216,11 +216,12 @@ class TelegramWebhooksController < Telegram::Bot::UpdatesController
     users = User.getUsers
     response = "============Cтатус: #{order.getStatus}================\n"
     response += "номер замовлення: #{order.id}\n"
-    response += "працівник: #{users[order.user_id]}\n" if user.is_admin
+    response += "відповідальний: #{users[order.user_id]}\n" if user.is_admin &&
     response += "Заказ: #{order.name} (#{order.created_at.to_date.strftime("%d.%m.%Y")}) \n"
     response += "клієнт: #{order.clientname} (#{order.clientphone})\n"
     response += "#{order.description}\n"
-    response += "ціна/аванс: #{order.price}/#{order.deposit}\n"
+    response += "ціна/аванс: #{order.price}/#{order.deposit}\n" if order.price.to_i > 0
+    response += "ціна/аванс: не встановлено\n" if order.price.to_i == 0
     response += "Закінчення: #{order.finish_date.strftime("%d.%m.%Y")}\n"
     response += "========================================================\n"
 

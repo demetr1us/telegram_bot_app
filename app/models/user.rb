@@ -39,6 +39,7 @@ class User < ApplicationRecord
     order.clientname = self.name
     order.user_id = self.id
     order.actor = self.id
+    order.finish_date = Date.today
     order.status = 0
     order.save!
     order

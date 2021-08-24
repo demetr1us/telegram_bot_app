@@ -19,7 +19,7 @@ module ClientStuffConcern
     user = getUser(chat['id'])
     user.create_order(session['client']['order']['name'], args.join(" "))
     respond_with :message, text: "Замовлення додано успішно!"
-    start!
+    list!
   end
 
   def client_orders!(*)
